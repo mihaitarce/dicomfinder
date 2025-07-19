@@ -1,0 +1,12 @@
+[project]
+name = "dicomfinder"
+version = "0.1.0"
+description = "Recursively find, copy and anonymize all DICOM datasets in a folder."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dicom-anonymizer>=1.0.12",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.1",
+    "pydicom>=3.0.1",
+]
