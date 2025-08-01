@@ -3,6 +3,20 @@ import pydicom
 import pandas as pd
 from dicomanonymizer import anonymize_dicom_file
 
+extract_headers = [
+    ["0018", "0050"],  # Slice Thickness
+    ["0018", "0060"],  # KVP
+    ["0018", "1150"],  # Exposure Time
+    ["0018", "1151"],  # X-Ray Tube Current
+    ["0018", "9345"],  # CTDIvol
+    ["0028", "0101"],  # Bits Stored
+    ["0028", "0010"],  # Rows
+    ["0028", "0011"],  # Columns
+    ["0008", "0070"],  # Manufacturer
+    ["0008", "1090"],  # Manufacturer's Model Name
+    ["0018", "1020"],  # Software Versions
+]
+
 def is_dicom_file(file_path):
     """Check if the given file is a DICOM file."""
     # Check if the path is a file
@@ -61,7 +75,7 @@ def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
     total_folders_processed = 0
     total_images_copied = 0
     total_size_copied = 0
-    folder_mapping = []
+    folder_info_list = []
     
     for index_folder, folder in enumerate(sorted(dicom_folders), start=1):
         print(f"Processing folder {index_folder}: {folder}")
@@ -73,15 +87,45 @@ def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
             os.makedirs(new_folder_path)
         
         dicom_files = [f for f in os.listdir(folder) if is_dicom_file(os.path.join(folder, f))]
-        
+
+        folder_info = {
+            "Original": folder,
+            "Anonymized": new_folder_name,
+        }
         for index_file, dicom_file in enumerate(sorted(dicom_files), start=1):
             source_file_path = os.path.join(folder, dicom_file)
             new_file_name = f"{index_file:04}.dcm"
             destination_file_path = os.path.join(new_folder_path, new_file_name)
-            
+
             # Copy the DICOM file to the new location
             anonymize_file(source_file_path, destination_file_path, index_folder)
-            
+
+            if index_file == 1:
+                headers = pydicom.dcmread(destination_file_path, stop_before_pixels=True)
+
+                modality = headers.get(["0008", "0060"])  # Modality
+                folder_info[modality.keyword] = modality.value
+
+                # Save extra headers for CT volumes
+                if modality.value == "CT":
+                    # Calculate FOV
+                    rows = headers.get(["0028","0010"]).value
+                    columns = headers.get(["0028","0011"]).value
+                    spacing = headers.get(["0028","0030"])
+
+                    if spacing:
+                        folder_info['FOV'] = f"{columns * spacing[0]:.1f} x {rows * spacing[1]:.1f}"
+                    else:
+                        spacing = float(headers.get(["0018", "0050"]).value)
+                        folder_info['FOV'] = f"{columns * spacing:.1f} x {rows * spacing:.1f}"
+
+                    # Save extra headers
+                    for header_id in extract_headers:
+                        elem = headers.get(header_id)
+                        if elem:
+                            folder_info[elem.keyword] = elem.value
+
+
             # Get the size of the copied file
             file_size = os.path.getsize(destination_file_path)
             total_size_copied += file_size
@@ -90,14 +134,11 @@ def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
             
             total_images_copied += 1
 
-        folder_mapping.append({
-            "Original": folder,
-            "Anonymized": new_folder_name
-        })
+        folder_info_list.append(folder_info)
         
         total_folders_processed += 1
     
-    return total_folders_processed, total_images_copied, total_size_copied, folder_mapping
+    return total_folders_processed, total_images_copied, total_size_copied, folder_info_list
 
 def save_folder_mapping_to_excel(folder_mapping, excel_path):
     """Save the folder mapping to an Excel file."""
