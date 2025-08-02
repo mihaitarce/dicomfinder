@@ -1,5 +1,7 @@
 # dicomfinder
 
+Recursively find, copy and anonymize all DICOM datasets in a folder.
+
 ## Installation
 
 Either install set up dependencies in a new virtual environment, or just use uv:
