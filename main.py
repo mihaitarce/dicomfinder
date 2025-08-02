@@ -3,7 +3,14 @@ import pydicom
 import pandas as pd
 from dicomanonymizer import anonymize_dicom_file
 
-extract_headers = [
+patient_headers = [
+    ["0008", "0012"],  # Instance Creation Date
+    ["0010", "0020"],  # Patient ID
+    ["0010", "0010"],  # Patient Name
+    ["0010", "0030"]   # Patient Date Of Birth
+]
+
+anonymized_headers = [
     ["0018", "0050"],  # Slice Thickness
     ["0018", "0060"],  # KVP
     ["0018", "1150"],  # Exposure Time
@@ -25,8 +32,9 @@ def is_dicom_file(file_path):
     
     try:
         # Attempt to read the file as a DICOM dataset
-        pydicom.dcmread(file_path, stop_before_pixels=True)
-        return True
+        headers = pydicom.dcmread(file_path, stop_before_pixels=True)
+        # Don't copy DICOMDIR files
+        return headers.get('DirectoryRecordSequence') is None
     except (pydicom.errors.InvalidDicomError, FileNotFoundError):
         # If an error occurs, it's not a valid DICOM file
         return False
@@ -67,7 +75,7 @@ def anonymize_file(source_file_path, destination_file_path, sequence_number):
 
     anonymize_dicom_file(source_file_path, destination_file_path, extra_anonmymization_rules)
 
-def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
+def copy_and_anonymize_dicom_files(dicom_folders, destination_dir, save_patient_metadata):
     """Copy and anonymize DICOM files to the destination directory with sequential four-digit names."""
     if not os.path.exists(destination_dir):
         os.makedirs(destination_dir)
@@ -88,20 +96,22 @@ def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
         
         dicom_files = [f for f in os.listdir(folder) if is_dicom_file(os.path.join(folder, f))]
 
-        folder_info = {
-            "Original": folder,
-            "Anonymized": new_folder_name,
-        }
         for index_file, dicom_file in enumerate(sorted(dicom_files), start=1):
             source_file_path = os.path.join(folder, dicom_file)
             new_file_name = f"{index_file:04}.dcm"
             destination_file_path = os.path.join(new_folder_path, new_file_name)
 
-            # Copy the DICOM file to the new location
-            anonymize_file(source_file_path, destination_file_path, index_folder)
-
             if index_file == 1:
-                headers = pydicom.dcmread(destination_file_path, stop_before_pixels=True)
+                folder_info = {"Original": folder}
+                headers = pydicom.dcmread(source_file_path, stop_before_pixels=True)
+
+                if save_patient_metadata:
+                    for header_id in patient_headers:
+                        elem = headers.get(header_id)
+                        if elem:
+                            folder_info[elem.keyword] = elem.value
+
+                folder_info["Anonymized"] = new_folder_name
 
                 modality = headers.get(["0008", "0060"])  # Modality
                 folder_info[modality.keyword] = modality.value
@@ -120,21 +130,21 @@ def copy_and_anonymize_dicom_files(dicom_folders, destination_dir):
                         folder_info['FOV'] = f"{columns * spacing:.1f} x {rows * spacing:.1f}"
 
                     # Save extra headers
-                    for header_id in extract_headers:
+                    for header_id in anonymized_headers:
                         elem = headers.get(header_id)
                         if elem:
                             folder_info[elem.keyword] = elem.value
 
+                folder_info_list.append(folder_info)
+
+            # Copy and anonymize the DICOM file
+            anonymize_file(source_file_path, destination_file_path, index_folder)
 
             # Get the size of the copied file
             file_size = os.path.getsize(destination_file_path)
             total_size_copied += file_size
-            
-            # Anonymize the copied DICOM file
-            
-            total_images_copied += 1
 
-        folder_info_list.append(folder_info)
+            total_images_copied += 1
         
         total_folders_processed += 1
     
@@ -152,6 +162,7 @@ if __name__ == "__main__":
     parser.add_argument("source_dir", type=str, help="The directory to search for DICOM folders.")
     parser.add_argument("destination_dir", type=str, help="The destination directory to copy and anonymize DICOM files.")
     parser.add_argument("--list-only", action="store_true", help="List the found DICOM folders and then exit.")
+    parser.add_argument("--patient-metadata", action="store_true", help="Save patient metadata in the Excel file.")
 
     args = parser.parse_args()
     
@@ -174,7 +185,9 @@ if __name__ == "__main__":
     else:
         print(f"\nNumber of DICOM folders found: {num_folders}")
         
-        total_folders_processed, total_images_copied, total_size_copied, folder_mapping = copy_and_anonymize_dicom_files(dicom_folders, destination_directory)
+        total_folders_processed, total_images_copied, total_size_copied, folder_mapping = copy_and_anonymize_dicom_files(dicom_folders,
+                                                                                                                         destination_directory,
+                                                                                                                         args.patient_metadata)
         
         excel_path = os.path.join(destination_directory, "folders.xlsx")
         save_folder_mapping_to_excel(folder_mapping, excel_path)
